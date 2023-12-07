@@ -20,7 +20,6 @@ import (
 	"github.com/google/blueprint/proptools"
 
 	"android/soong/android"
-	"android/soong/bazel"
 	"android/soong/genrule"
 	"android/soong/java"
 )
@@ -61,7 +60,6 @@ type CombinedApisProperties struct {
 
 type CombinedApis struct {
 	android.ModuleBase
-	android.BazelModuleBase
 
 	properties CombinedApisProperties
 }
@@ -102,17 +100,12 @@ type fgProps struct {
 	Visibility []string
 }
 
-type Bazel_module struct {
-	Bp2build_available *bool
-}
-type bazelProperties struct {
-	*Bazel_module
-}
-
-var bp2buildNotAvailable = bazelProperties{
-	&Bazel_module{
-		Bp2build_available: proptools.BoolPtr(false),
-	},
+type defaultsProps struct {
+	Name                *string
+	Api_surface         *string
+	Api_contributions   []string
+	Defaults_visibility []string
+	Previous_api        *string
 }
 
 // Struct to pass parameters for the various merged [current|removed].txt file modules we create.
@@ -160,7 +153,7 @@ func createMergedTxt(ctx android.LoadHookContext, txt MergedTxtDefinition) {
 		},
 	}
 	props.Visibility = []string{"//visibility:public"}
-	ctx.CreateModule(genrule.GenRuleFactory, &props, &bp2buildNotAvailable)
+	ctx.CreateModule(genrule.GenRuleFactory, &props)
 }
 
 func createMergedAnnotationsFilegroups(ctx android.LoadHookContext, modules, system_server_modules []string) {
@@ -190,7 +183,7 @@ func createMergedAnnotationsFilegroups(ctx android.LoadHookContext, modules, sys
 		props := fgProps{}
 		props.Name = proptools.StringPtr(i.name)
 		props.Srcs = createSrcs(i.modules, i.tag)
-		ctx.CreateModule(android.FileGroupFactory, &props, &bp2buildNotAvailable)
+		ctx.CreateModule(android.FileGroupFactory, &props)
 	}
 }
 
@@ -282,7 +275,7 @@ func createPublicStubsSourceFilegroup(ctx android.LoadHookContext, modules []str
 	props.Name = proptools.StringPtr("all-modules-public-stubs-source")
 	props.Srcs = createSrcs(modules, "{.public.stubs.source}")
 	props.Visibility = []string{"//frameworks/base"}
-	ctx.CreateModule(android.FileGroupFactory, &props, &bp2buildNotAvailable)
+	ctx.CreateModule(android.FileGroupFactory, &props)
 }
 
 func createMergedTxts(ctx android.LoadHookContext, bootclasspath, system_server_classpath []string) {
@@ -354,53 +347,7 @@ func combinedApisModuleFactory() android.Module {
 	module.AddProperties(&module.properties)
 	android.InitAndroidModule(module)
 	android.AddLoadHook(module, func(ctx android.LoadHookContext) { module.createInternalModules(ctx) })
-	android.InitBazelModule(module)
 	return module
-}
-
-type bazelCombinedApisAttributes struct {
-	Scope bazel.StringAttribute
-	Base  bazel.LabelAttribute
-	Deps  bazel.LabelListAttribute
-}
-
-// combined_apis bp2build converter
-func (a *CombinedApis) ConvertWithBp2build(ctx android.TopDownMutatorContext) {
-	basePrefix := "non-updatable"
-	scopeToSuffix := map[string]string{
-		"public":        "-current.txt",
-		"system":        "-system-current.txt",
-		"module-lib":    "-module-lib-current.txt",
-		"system-server": "-system-server-current.txt",
-	}
-
-	for scopeName, suffix := range scopeToSuffix{
-		name := a.Name() + suffix
-
-		var scope bazel.StringAttribute
-		scope.SetValue(scopeName)
-
-		var base bazel.LabelAttribute
-		base.SetValue(android.BazelLabelForModuleDepSingle(ctx, basePrefix+suffix))
-
-		var deps bazel.LabelListAttribute
-		classpath := a.properties.Bootclasspath
-		if scopeName == "system-server" {
-			classpath = a.properties.System_server_classpath
-		}
-		deps = bazel.MakeLabelListAttribute(android.BazelLabelForModuleDeps(ctx, classpath))
-
-		attrs := bazelCombinedApisAttributes{
-			Scope: scope,
-			Base:  base,
-			Deps:  deps,
-		}
-		props := bazel.BazelTargetModuleProperties{
-			Rule_class:        "merged_txts",
-			Bzl_load_location: "//build/bazel/rules/java:merged_txts.bzl",
-		}
-		ctx.CreateBazelTargetModule(props, android.CommonAttributes{Name: name}, &attrs)
-	}
 }
 
 // Various utility methods below.
